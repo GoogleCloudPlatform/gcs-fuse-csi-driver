@@ -53,7 +53,7 @@ const (
 	GcsfuseProfilesManagedLabel                           = "gke-gcsfuse/profile-managed"
 	GcsfuseCacheCreatedByUserLabel                        = "gke-gcsfuse/cache-created-by-user"
 	BucketScanPendingSchedulingGate                       = "gke-gcsfuse/bucket-scan-pending"
-	GcsfuseProfileVolumeCountAnnotation                   = "gke-gcsfuse/profile-volume-count" // TODO(yaozile): set this annotation by webhook.
+	GcsfuseProfileVolumeCountAnnotation                   = "gke-gcsfuse/profile-volume-count"
 	GcsfuseStorageClassNameVolumeAttribute                = "gke-gcsfuse/storage-class-name"
 	SidecarContainerFileCacheEphemeralDiskVolumeName      = "gcsfuse-file-cache-ephemeral-disk"
 	SidecarContainerFileCacheEphemeralDiskVolumeMountPath = "/gcsfuse-file-cache-ephemeral-disk"

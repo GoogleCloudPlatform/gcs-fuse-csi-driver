@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1322,6 +1323,8 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 		wantPod            *corev1.Pod
 		cacheCreatedByUser bool
 		isSharedMount      bool
+		enableProfilesV2   bool
+		profileVolumeCount int
 		expectErr          bool
 	}{
 		{
@@ -1708,6 +1711,99 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 			cacheCreatedByUser: true,
 			isSharedMount:      true,
 		},
+		{
+			name: "profiles v2 pod with sidecar skips scheduling gate and sets volume count annotation",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "v2-pod",
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{Name: GcsFuseSidecarName},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "v2-pod",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+					Annotations: map[string]string{
+						GcsfuseProfileVolumeCountAnnotation: "2",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			enableProfilesV2:   true,
+			profileVolumeCount: 2,
+		},
+		{
+			name: "profiles v2 pod overwrites pre-existing volume count annotation and keeps unrelated gate",
+			inputPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "v2-pod-existing",
+					Annotations: map[string]string{
+						GcsfuseProfileVolumeCountAnnotation: "99",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{{Name: "example.com/custom-gate"}},
+					InitContainers: []corev1.Container{
+						{Name: GcsFuseSidecarName},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			wantPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "v2-pod-existing",
+					Labels: map[string]string{
+						GcsfuseProfilesManagedLabel: "true",
+					},
+					Annotations: map[string]string{
+						GcsfuseProfileVolumeCountAnnotation: "1",
+					},
+				},
+				Spec: corev1.PodSpec{
+					SchedulingGates: []corev1.PodSchedulingGate{{Name: "example.com/custom-gate"}},
+					Volumes:         []corev1.Volume{expectedEphemeralVolume, expectedRAMVolume},
+					InitContainers: []corev1.Container{
+						{
+							Name: GcsFuseSidecarName,
+							VolumeMounts: []corev1.VolumeMount{
+								expectedEphemeralMount,
+								expectedRAMMount,
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{Name: "app-container"},
+					},
+				},
+			},
+			enableProfilesV2:   true,
+			profileVolumeCount: 1,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1717,7 +1813,7 @@ func TestModifyPodSpecForGCSFuseProfiles(t *testing.T) {
 
 			// The function doesn't actually use the client or context,
 			// so we can pass in nil or empty values.
-			err := ModifyPodSpecForGCSFuseProfiles(podToModify, tc.cacheCreatedByUser, tc.isSharedMount)
+			err := ModifyPodSpecForGCSFuseProfiles(podToModify, tc.cacheCreatedByUser, tc.isSharedMount, tc.enableProfilesV2, tc.profileVolumeCount)
 			if err != nil || tc.expectErr {
 				if !tc.expectErr {
 					t.Fatalf("ModifyPodSpecForGcsfuseProfiles() returned an unexpected error: %v", err)
@@ -2848,6 +2944,371 @@ func TestValidateServiceAccountName(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatalf("ValidateServiceAccountName(%q, %q, %q) unexpected error: %v", tc.workloadSA, tc.targetSA, tc.targetDesc, err)
+			}
+		})
+	}
+}
+
+func TestProfilesV2PVMutation(t *testing.T) {
+	t.Parallel()
+
+	newPV := func(driver, scName string, attrs, labels map[string]string) *corev1.PersistentVolume {
+		return &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-pv", Labels: labels},
+			Spec: corev1.PersistentVolumeSpec{
+				StorageClassName: scName,
+				PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: &corev1.CSIPersistentVolumeSource{
+						Driver:           driver,
+						VolumeAttributes: attrs,
+					},
+				},
+			},
+		}
+	}
+
+	testCases := []struct {
+		name              string
+		enableProfiles    bool
+		enableProfilesV2  bool
+		enableSharedMount bool
+		inputPV           *corev1.PersistentVolume
+		wantPV            *corev1.PersistentVolume // nil expects Allowed with no patches
+	}{
+		{
+			name:           "V1 flag off does not inject storageClassName",
+			enableProfiles: true,
+			inputPV:        newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", nil, nil),
+		},
+		{
+			name:             "V2 flag has no effect when profiles disabled",
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", nil, nil),
+		},
+		{
+			name:             "V2 injects storageClassName when VolumeAttributes is nil",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", nil, nil),
+			wantPV: newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{
+				GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training",
+			}, nil),
+		},
+		{
+			name:             "V2 preserves existing VolumeAttributes when injecting storageClassName",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{"fuseMemoryAllocatableFactor": "0.5"}, nil),
+			wantPV: newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{
+				"fuseMemoryAllocatableFactor":          "0.5",
+				GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training",
+			}, nil),
+		},
+		{
+			name:             "V2 is a no-op when storageClassName attribute already matches",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training"}, nil),
+		},
+		{
+			name:             "V2 overwrites mismatched storageClassName attribute",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{GcsfuseStorageClassNameVolumeAttribute: "wrong-sc"}, nil),
+			wantPV: newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{
+				GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training",
+			}, nil),
+		},
+		{
+			name:             "V2 skips PV with empty StorageClassName",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "", nil, nil),
+		},
+		{
+			name:             "V2 leaves existing storageClassName attribute untouched when StorageClassName is empty",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV(util.GCSFuseCsiDriverName, "", map[string]string{GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training"}, nil),
+		},
+		{
+			name:              "V2 merges storageClassName injection with shared mount PV patch",
+			enableProfiles:    true,
+			enableProfilesV2:  true,
+			enableSharedMount: true,
+			inputPV:           newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{SharedMountVolumeAttribute: util.TrueStr}, nil),
+			wantPV: newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{
+				SharedMountVolumeAttribute:             util.TrueStr,
+				util.VolumeContextKeyPVName:            "test-pv",
+				GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training",
+			}, map[string]string{SharedMountLabel: util.TrueStr}),
+		},
+		{
+			name:             "V2 skips non-gcsfuse CSI PV",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV:          newPV("pd.csi.storage.gke.io", "gcsfusecsi-training", nil, nil),
+		},
+		{
+			name:             "V2 skips V1 bucket scan override annotation validation",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			inputPV: func() *corev1.PersistentVolume {
+				pv := newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", nil, nil)
+				pv.Annotations = map[string]string{putil.AnnotationStatus: putil.ScanOverride}
+				return pv
+			}(),
+			wantPV: func() *corev1.PersistentVolume {
+				pv := newPV(util.GCSFuseCsiDriverName, "gcsfusecsi-training", map[string]string{
+					GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training",
+				}, nil)
+				pv.Annotations = map[string]string{putil.AnnotationStatus: putil.ScanOverride}
+				return pv
+			}(),
+		},
+	}
+
+	sortPatches := func(resp *admission.Response) {
+		sort.Slice(resp.Patches, func(i, j int) bool {
+			if resp.Patches[i].Path != resp.Patches[j].Path {
+				return resp.Patches[i].Path < resp.Patches[j].Path
+			}
+			return resp.Patches[i].Operation < resp.Patches[j].Operation
+		})
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			si := SidecarInjector{
+				Decoder: admission.NewDecoder(runtime.NewScheme()),
+				Config: &Config{
+					EnableGcsfuseProfiles:   tc.enableProfiles,
+					EnableGcsfuseProfilesV2: tc.enableProfilesV2,
+					EnableSharedNodeMount:   tc.enableSharedMount,
+				},
+			}
+			rawPV := serialize(t, tc.inputPV)
+			got := si.Handle(context.Background(), admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Create,
+					Kind:      metav1.GroupVersionKind{Version: "v1", Kind: "PersistentVolume"},
+					Object:    runtime.RawExtension{Raw: rawPV},
+				},
+			})
+			if !got.Allowed {
+				t.Fatalf("Handle() denied request: %+v", got.Result)
+			}
+
+			var want admission.Response
+			if tc.wantPV != nil {
+				want = admission.PatchResponseFromRaw(rawPV, serialize(t, tc.wantPV))
+			}
+			sortPatches(&want)
+			sortPatches(&got)
+			if diff := cmp.Diff(want.Patches, got.Patches); diff != "" {
+				t.Errorf("Handle() patches mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestProfilesV2PodMutation(t *testing.T) {
+	t.Parallel()
+
+	profileSCTrain := &storagev1.StorageClass{
+		ObjectMeta:  metav1.ObjectMeta{Name: "gcsfusecsi-training", Labels: map[string]string{putil.LabelProfile: util.TrueStr}},
+		Provisioner: util.GCSFuseCsiDriverName,
+	}
+	profileSCServe := &storagev1.StorageClass{
+		ObjectMeta:  metav1.ObjectMeta{Name: "gcsfusecsi-serving", Labels: map[string]string{putil.LabelProfile: util.TrueStr}},
+		Provisioner: util.GCSFuseCsiDriverName,
+	}
+	plainSC := &storagev1.StorageClass{
+		ObjectMeta:  metav1.ObjectMeta{Name: "standard"},
+		Provisioner: util.GCSFuseCsiDriverName,
+	}
+	sharedPV := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-pv"},
+		Spec: corev1.PersistentVolumeSpec{
+			StorageClassName: "gcsfusecsi-training",
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:           util.GCSFuseCsiDriverName,
+					VolumeAttributes: map[string]string{SharedMountVolumeAttribute: util.TrueStr},
+				},
+			},
+		},
+	}
+	sharedPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "shared-pvc",
+			Namespace:   testNamespace,
+			Annotations: map[string]string{MounterPodTemplateAnnotation: "mounter-template"},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: ptr.To("gcsfusecsi-training"),
+			VolumeName:       "shared-pv",
+		},
+	}
+	podTemplate := &corev1.PodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "mounter-template", Namespace: testNamespace},
+	}
+	objects := []runtime.Object{
+		&nativeSupportNodes()[0],
+		profileSCTrain,
+		profileSCServe,
+		plainSC,
+		sharedPV,
+		sharedPVC,
+		podTemplate,
+		&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "pvc-train", Namespace: testNamespace},
+			Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr.To("gcsfusecsi-training")},
+		},
+		&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "pvc-serve", Namespace: testNamespace},
+			Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr.To("gcsfusecsi-serving")},
+		},
+		&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "pvc-plain", Namespace: testNamespace},
+			Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: ptr.To("standard")},
+		},
+		&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "pvc-no-sc", Namespace: testNamespace},
+		},
+	}
+
+	testCases := []struct {
+		name              string
+		enableProfiles    bool
+		enableProfilesV2  bool
+		enableSharedMount bool
+		pvcNames          []string
+		includeInlineCSI  bool
+		wantProfileLabel  bool
+		wantGate          bool
+		wantVolumeCount   string
+	}{
+		{
+			name:             "V1 adds scheduling gate and omits volume count annotation",
+			enableProfiles:   true,
+			pvcNames:         []string{"pvc-train", "pvc-serve"},
+			wantProfileLabel: true,
+			wantGate:         true,
+		},
+		{
+			name:             "V2 counts distinct profile PVCs and ignores duplicates, non-profile, missing, and inline CSI",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			pvcNames:         []string{"pvc-train", "pvc-serve", "pvc-train", "pvc-plain", "pvc-no-sc", "pvc-missing"},
+			includeInlineCSI: true,
+			wantProfileLabel: true,
+			wantVolumeCount:  "2",
+		},
+		{
+			name:             "V2 skips profile mutations when no profile PVCs are present",
+			enableProfiles:   true,
+			enableProfilesV2: true,
+			pvcNames:         []string{"pvc-plain"},
+		},
+		{
+			name:             "V2 flag has no effect when profiles disabled",
+			enableProfilesV2: true,
+			pvcNames:         []string{"pvc-train"},
+		},
+		{
+			name:              "V2 shared mount pod gets profile label without scheduling gate or volume count",
+			enableProfiles:    true,
+			enableProfilesV2:  true,
+			enableSharedMount: true,
+			pvcNames:          []string{"shared-pvc"},
+			wantProfileLabel:  true,
+		},
+	}
+
+	countPatchPath := "/metadata/annotations/" + strings.ReplaceAll(GcsfuseProfileVolumeCountAnnotation, "/", "~1")
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeClient := fake.NewSimpleClientset(objects...)
+			informerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
+			si := SidecarInjector{
+				Decoder:                admission.NewDecoder(runtime.NewScheme()),
+				Config:                 FakeConfig(),
+				MetadataPrefetchConfig: FakePrefetchConfig(),
+				NodeLister:             informerFactory.Core().V1().Nodes().Lister(),
+				PvLister:               informerFactory.Core().V1().PersistentVolumes().Lister(),
+				PvcLister:              informerFactory.Core().V1().PersistentVolumeClaims().Lister(),
+				ScLister:               informerFactory.Storage().V1().StorageClasses().Lister(),
+				PodTemplateLister:      informerFactory.Core().V1().PodTemplates().Lister(),
+			}
+			si.Config.EnableGcsfuseProfiles = tc.enableProfiles
+			si.Config.EnableGcsfuseProfilesV2 = tc.enableProfilesV2
+			si.Config.EnableSharedNodeMount = tc.enableSharedMount
+
+			stopCh := make(chan struct{})
+			defer close(stopCh)
+			informerFactory.Start(stopCh)
+			informerFactory.WaitForCacheSync(stopCh)
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-pod",
+					Namespace:   testNamespace,
+					Annotations: map[string]string{GcsFuseVolumeEnableAnnotation: util.TrueStr},
+				},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+			}
+			for i, pvcName := range tc.pvcNames {
+				pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+					Name:         fmt.Sprintf("vol-%d", i),
+					VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}},
+				})
+			}
+			if tc.includeInlineCSI {
+				pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+					Name: "inline-csi",
+					VolumeSource: corev1.VolumeSource{
+						CSI: &corev1.CSIVolumeSource{
+							Driver:           util.GCSFuseCsiDriverName,
+							VolumeAttributes: map[string]string{"bucketName": "inline-bucket"},
+						},
+					},
+				})
+			}
+
+			got := si.Handle(context.Background(), admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Operation: admissionv1.Create,
+					Kind:      metav1.GroupVersionKind{Version: "v1", Kind: "Pod"},
+					Object:    runtime.RawExtension{Raw: serialize(t, pod)},
+				},
+			})
+			if !got.Allowed {
+				t.Fatalf("Handle() denied request: %+v", got.Result)
+			}
+
+			var gotProfileLabel, gotGate bool
+			var gotVolumeCount string
+			for _, p := range got.Patches {
+				switch p.Path {
+				case "/metadata/labels":
+					if m, ok := p.Value.(map[string]any); ok && m[GcsfuseProfilesManagedLabel] == util.TrueStr {
+						gotProfileLabel = true
+					}
+				case "/spec/schedulingGates":
+					gotGate = true
+				case countPatchPath:
+					gotVolumeCount, _ = p.Value.(string)
+				}
+			}
+			if gotProfileLabel != tc.wantProfileLabel || gotGate != tc.wantGate || gotVolumeCount != tc.wantVolumeCount {
+				t.Errorf("Handle() profileLabel=%t, gate=%t, volumeCount=%q; want %t, %t, %q (patches: %+v)",
+					gotProfileLabel, gotGate, gotVolumeCount, tc.wantProfileLabel, tc.wantGate, tc.wantVolumeCount, got.Patches)
 			}
 		})
 	}

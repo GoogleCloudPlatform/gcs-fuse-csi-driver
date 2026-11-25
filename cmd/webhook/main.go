@@ -58,6 +58,7 @@ var (
 	metadataSidecarImage                    = flag.String("metadata-sidecar-image", "", "The metadata prefetch sidecar container image.")
 	injectSAVol                             = flag.Bool("should-inject-sa-vol", false, "Inject projected service account volume when true")
 	enableGcsfuseProfiles                   = flag.Bool("enable-gcsfuse-profiles", false, "Enable gcsfuse profiles when true")
+	enableGcsfuseProfilesV2                 = flag.Bool("enable-gcsfuse-profiles-v2", false, "Enable gcsfuse profiles V2 when true. Only takes effect when enable-gcsfuse-profiles is true.")
 	enableSharedNodeMount                   = flag.Bool("enable-shared-node-mount", false, "Enable shared node mount feature when true")
 	enableAutoGoMemLimit                    = flag.Bool("enable-auto-gomemlimit", false, "Automatically set GOMEMLIMIT to a percentage of the container's cgroup memory limit.")
 	autoGoMemLimitRatio                     = flag.Float64("auto-gomemlimit-ratio", util.GoMemLimitCgroupPercentage, "The ratio of the container's cgroup memory limit to set as GOMEMLIMIT when enable-auto-gomemlimit is enabled.")
@@ -106,6 +107,8 @@ func main() {
 
 	fuseSideCarConfig.EnableGcsfuseProfiles = *enableGcsfuseProfiles
 	klog.Infof("Webhook should enable gcsfuse profiles: %t", fuseSideCarConfig.EnableGcsfuseProfiles)
+
+	fuseSideCarConfig.EnableGcsfuseProfilesV2 = *enableGcsfuseProfilesV2
 
 	fuseSideCarConfig.EnableSharedNodeMount = *enableSharedNodeMount
 	klog.Infof("Webhook should enable shared node mount: %t", fuseSideCarConfig.EnableSharedNodeMount)

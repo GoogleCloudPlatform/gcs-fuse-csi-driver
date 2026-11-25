@@ -29,13 +29,14 @@ import (
 )
 
 type Config struct {
-	ShouldInjectSAVolume  bool   `json:"-"`
-	EnableGcsfuseProfiles bool   `json:"-"`
-	EnableSharedNodeMount bool   `json:"-"`
-	PodHostNetworkSetting bool   `json:"-"`
-	EnableNumaPinning     bool   `json:"enable-numa-pinning,omitempty"`
-	ContainerImage        string `json:"-"`
-	ImagePullPolicy       string `json:"-"`
+	ShouldInjectSAVolume    bool   `json:"-"`
+	EnableGcsfuseProfiles   bool   `json:"-"`
+	EnableGcsfuseProfilesV2 bool   `json:"-"`
+	EnableSharedNodeMount   bool   `json:"-"`
+	PodHostNetworkSetting   bool   `json:"-"`
+	EnableNumaPinning       bool   `json:"enable-numa-pinning,omitempty"`
+	ContainerImage          string `json:"-"`
+	ImagePullPolicy         string `json:"-"`
 	//nolint:tagliatelle
 	CPURequest resource.Quantity `json:"cpu-request,omitempty"`
 	//nolint:tagliatelle
