@@ -545,14 +545,15 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 // explicit value, the HTTP/1.1 suites would silently run over gRPC and lose HTTP/1.1
 // coverage. Only the enable-grpc-by-default tests leave it unset to exercise the default.
 //
-// ClientProtocol cannot be passed through as is: CI sets it to "http" for the HTTP/1.1
-// suites, but GCSFuse only accepts http1, http2, grpc, or httpmtls.
+// CI sets ClientProtocol to "http" for the HTTP/1.1 suites (and the flag defaults to "http"),
+// but GCSFuse only accepts http1, http2, grpc, or httpmtls, so "" and "http" map to "http1".
+// Any other value is passed through as is.
 func (n *GCSFuseCSITestDriver) gcsfuseClientProtocol() string {
-	if n.ClientProtocol == "grpc" {
-		return "grpc"
+	if n.ClientProtocol == "" || n.ClientProtocol == "http" {
+		return "http1"
 	}
 
-	return "http1"
+	return n.ClientProtocol
 }
 
 // prepareStorageService prepares the GCS Storage Service using the default GCP credentials.
