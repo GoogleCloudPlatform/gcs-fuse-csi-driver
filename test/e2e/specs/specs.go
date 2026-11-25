@@ -935,6 +935,9 @@ func CreateVolumeResource(ctx context.Context, driver storageframework.TestDrive
 		}
 		pvSource.CSI.VolumeHandle += opt.VolumeHandleSuffix
 	}
+	if pvSource.CSI != nil {
+		removeDefaultClientProtocol(pvSource.CSI.VolumeAttributes, opt.PVMountOptions)
+	}
 
 	pvName := fmt.Sprintf("gcsfuse-shared-pv-%s", rand.String(8))
 	pvcName := fmt.Sprintf("pvc-%s", rand.String(8))
@@ -1064,18 +1067,22 @@ func (t *TestPod) ensureMounterPodTemplateAnnotation(volumeResource *storagefram
 	framework.ExpectNoError(err, "failed to update PVC with mounter pod template annotation")
 }
 
-// appendMountOptions appends mountOptions to the CSI volume's mountOptions attribute. If
-// mountOptions set a client protocol (as client-protocol=<value> or
-// gcs-connection:client-protocol:<value>), the default client-protocol=<value> set by
-// CreateVolume is removed first so the test's protocol is used.
-func appendMountOptions(csi *corev1.CSIVolumeSource, mountOptions []string) {
-	testMountOptions := strings.Join(mountOptions, ",")
-	if strings.Contains(testMountOptions, "client-protocol") {
-		options := strings.Split(csi.VolumeAttributes["mountOptions"], ",")
-		options = slices.DeleteFunc(options, func(o string) bool { return strings.HasPrefix(o, "client-protocol=") })
-		csi.VolumeAttributes["mountOptions"] = strings.Join(options, ",")
+// removeDefaultClientProtocol removes the default client-protocol=<value> that CreateVolume sets
+// in the volume attributes when the test's mountOptions set their own client protocol (as
+// client-protocol=<value> or gcs-connection:client-protocol:<value>), so the test's protocol is used.
+func removeDefaultClientProtocol(attributes map[string]string, mountOptions []string) {
+	if !strings.Contains(strings.Join(mountOptions, ","), "client-protocol") {
+		return
 	}
-	csi.VolumeAttributes["mountOptions"] += "," + testMountOptions
+	options := strings.Split(attributes["mountOptions"], ",")
+	options = slices.DeleteFunc(options, func(o string) bool { return strings.HasPrefix(o, "client-protocol=") })
+	attributes["mountOptions"] = strings.Join(options, ",")
+}
+
+// appendMountOptions appends mountOptions to the CSI volume's mountOptions attribute.
+func appendMountOptions(csi *corev1.CSIVolumeSource, mountOptions []string) {
+	removeDefaultClientProtocol(csi.VolumeAttributes, mountOptions)
+	csi.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
 }
 
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
