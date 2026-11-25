@@ -305,8 +305,9 @@ func (n *GCSFuseCSITestDriver) CreateVolume(ctx context.Context, config *storage
 		}
 		mountOptions := "logging:severity:info"
 
-		if n.ClientProtocol == "grpc" && config.Prefix != EnableGrpcByDefaultPrefix {
-			mountOptions += ",client-protocol=grpc"
+		// EnableGrpcByDefaultPrefix tests rely on the default protocol, so don't set one.
+		if config.Prefix != EnableGrpcByDefaultPrefix {
+			mountOptions += ",client-protocol=" + n.gcsfuseClientProtocol()
 		}
 		if n.gcsfuseVersion == nil || n.gcsfuseBranch == "" {
 			n.gcsfuseVersion, n.gcsfuseBranch = GCSFuseVersionAndBranch()
@@ -515,6 +516,10 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 	defaultBindingMode := storagev1.VolumeBindingWaitForFirstConsumer
 
 	mountOptions := []string{"debug_gcs", "debug_fuse", "debug_fs"}
+	// EnableGrpcByDefaultPrefix tests rely on the default protocol, so don't set one.
+	if config.Prefix != EnableGrpcByDefaultPrefix {
+		mountOptions = append(mountOptions, "client-protocol="+n.gcsfuseClientProtocol())
+	}
 	switch config.Prefix {
 	case NonRootVolumePrefix:
 		mountOptions = append(mountOptions, "uid=1001")
@@ -531,6 +536,18 @@ func (n *GCSFuseCSITestDriver) GetDynamicProvisionStorageClass(ctx context.Conte
 		Parameters:        parameters,
 		VolumeBindingMode: &defaultBindingMode,
 	}
+}
+
+// gcsfuseClientProtocol returns the client protocol to set explicitly on test volumes.
+// HTTP/1.1 is set explicitly too, because GCSFuse defaults to gRPC with
+// --enable-grpc-by-default. CI passes "http", which GCSFuse doesn't accept, so "" and
+// "http" map to "http1".
+func (n *GCSFuseCSITestDriver) gcsfuseClientProtocol() string {
+	if n.ClientProtocol == "" || n.ClientProtocol == "http" {
+		return "http1"
+	}
+
+	return n.ClientProtocol
 }
 
 // prepareStorageService prepares the GCS Storage Service using the default GCP credentials.
