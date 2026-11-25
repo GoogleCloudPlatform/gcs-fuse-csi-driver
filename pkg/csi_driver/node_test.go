@@ -5132,6 +5132,9 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 		enableGrpcByDefault bool
 		disableHWGRO        string
 		profilesEnabled     bool
+		profilesV2          bool
+		storageClassName    string
+		getPVErr            error
 		skipPVAnnotations   bool
 		scParameters        map[string]string
 		kubeletVersion      string
@@ -5249,6 +5252,37 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			targetPathMounted:   false,
 			wantHWgroCalls:      0,
 		},
+		{
+			name:                "skips HWgro on shared mount publish under V2 using storageClassName from VolumeContext without GetPV",
+			enableGrpcByDefault: true,
+			profilesEnabled:     true,
+			profilesV2:          true,
+			storageClassName:    "test-sc",
+			getPVErr:            errors.New("unexpected GetPV call"),
+			scParameters:        map[string]string{"disableHWGRO": "true"},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "skips HWgro on shared mount publish under V2 by falling back to GetPV when storageClassName is absent from VolumeContext",
+			enableGrpcByDefault: true,
+			profilesEnabled:     true,
+			profilesV2:          true,
+			skipPVAnnotations:   true,
+			scParameters:        map[string]string{"disableHWGRO": "true"},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      0,
+		},
+		{
+			name:                "enables HWgro on shared mount publish under V1 when storageClassName is only in VolumeContext and PV is absent",
+			enableGrpcByDefault: true,
+			profilesEnabled:     true,
+			storageClassName:    "test-sc",
+			getPVErr:            apierrors.NewNotFound(corev1.Resource("persistentvolumes"), "node-publish"),
+			scParameters:        map[string]string{"disableHWGRO": "true"},
+			kubeletVersion:      "v1.37.1-gke.1552000",
+			wantHWgroCalls:      1,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -5296,6 +5330,7 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 					Parameters: tc.scParameters,
 				})
 			}
+			fc.GetPVErr = tc.getPVErr
 
 			testEnv := initTestNodeServerWithCustomClientset(t, fc, false)
 			ns := testEnv.ns.(*nodeServer)
@@ -5306,6 +5341,7 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			ns.driver.config.FeatureOptions.EnableGrpcByDefault = tc.enableGrpcByDefault
 			ns.driver.config.FeatureOptions.EnableHWgro = true
 			ns.driver.config.FeatureOptions.FeatureGCSFuseProfiles.Enabled = tc.profilesEnabled
+			ns.driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableProfilesV2 = tc.profilesV2
 			ns.driver.config.AssumeGoodSidecarVersion = true
 
 			mountPoints := []mount.MountPoint{{Device: volID, Path: stagingPath, Type: FuseMountType}}
@@ -5319,6 +5355,9 @@ func TestNodePublishVolumeForSharedMountEnableHWgro(t *testing.T) {
 			}
 			if tc.disableHWGRO != "" {
 				volContext[VolumeContextKeyDisableHWGRO] = tc.disableHWGRO
+			}
+			if tc.storageClassName != "" {
+				volContext[webhook.GcsfuseStorageClassNameVolumeAttribute] = tc.storageClassName
 			}
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId:          volID,
@@ -6264,10 +6303,13 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 		name               string
 		volumeID           string
 		scMountOptions     []string
+		volumeContext      map[string]string
+		failOnGetPV        bool
 		zonalBucket        bool
 		skipCreateBucket   bool
 		cachedLocationType string
 		wantLSSD           bool
+		wantNoProfile      bool
 		wantPrefix         string
 		wantWithoutAuth    bool
 	}{
@@ -6282,6 +6324,22 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 			wantLSSD:        true,
 			wantPrefix:      "team-a/sub/",
 			wantWithoutAuth: true,
+		},
+		{
+			name:          "storageClassName in VolumeContext without GetPV - should mount with lssd file cache options",
+			volumeContext: map[string]string{webhook.GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training"},
+			failOnGetPV:   true,
+			wantLSSD:      true,
+		},
+		{
+			name: "ephemeral volume with storageClassName in VolumeContext - should skip profiles without GetPV",
+			volumeContext: map[string]string{
+				VolumeContextKeyEphemeral:                      util.TrueStr,
+				VolumeContextKeyBucketName:                     testVolumeID,
+				webhook.GcsfuseStorageClassNameVolumeAttribute: "gcsfusecsi-training",
+			},
+			failOnGetPV:   true,
+			wantNoProfile: true,
 		},
 	}
 
@@ -6326,11 +6384,18 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 			recMgr := &recordingStorageServiceManager{ServiceManager: driver.config.StorageServiceManager}
 			driver.config.StorageServiceManager = recMgr
 
+			vc := map[string]string{VolumeContextKeyPodName: "test-pod", VolumeContextKeyPodNamespace: "test-ns"}
+			for k, v := range tc.volumeContext {
+				vc[k] = v
+			}
 			req := &csi.NodePublishVolumeRequest{
 				VolumeId: volumeID, TargetPath: testTargetPath, VolumeCapability: testVolumeCapability,
-				VolumeContext: map[string]string{VolumeContextKeyPodName: "test-pod", VolumeContextKeyPodNamespace: "test-ns"},
+				VolumeContext: vc,
 			}
 			ns := newNodeServer(driver, fakeMounter).(*nodeServer)
+			if tc.failOnGetPV {
+				fakeClient.GetPVErr = errors.New("unexpected GetPV call")
+			}
 			if tc.cachedLocationType != "" {
 				ns.volumeStateStore.Store(testTargetPath, &util.VolumeState{BucketAccessCheckPassed: true, BucketLocationType: tc.cachedLocationType})
 			}
@@ -6350,7 +6415,10 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 
 			expectedOpts := []string{"metadata-cache:stat-cache-max-size-mb:70", "file-cache:max-size-mb:0"}
 			unexpectedOpts := []string{"file-cache-medium=" + util.MediumLSSD}
-			if tc.wantLSSD {
+			if tc.wantNoProfile {
+				expectedOpts = nil
+				unexpectedOpts = []string{"metadata-cache:stat-cache-max-size-mb:70", "file-cache:max-size-mb:0", "file-cache:max-size-mb:85", "file-cache-medium=" + util.MediumLSSD}
+			} else if tc.wantLSSD {
 				expectedOpts = []string{"metadata-cache:stat-cache-max-size-mb:70", "file-cache:max-size-mb:85", "file-cache-medium=" + util.MediumLSSD}
 				unexpectedOpts = nil
 			}

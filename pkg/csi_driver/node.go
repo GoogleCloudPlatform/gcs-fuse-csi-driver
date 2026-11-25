@@ -413,6 +413,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			IsInitContainer:     isInitContainer,
 			Pod:                 pod,
 			EnableProfilesV2:    s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableProfilesV2,
+			VolumeContext:       vc,
+			IsEphemeral:         vc[VolumeContextKeyEphemeral] == util.TrueStr,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build profile config: %w", err)
@@ -1715,10 +1717,11 @@ func (s *nodeServer) checkWINodeLabel(node *corev1.Node, isHostNetwork bool) err
 }
 
 // isHWgroDisabledByStorageClass checks whether disableHWGRO is set to true in the volume's
-// StorageClass parameters when GCSFuse Storage Profiles is enabled and disableHWGRO is not
-// already explicitly specified in the volume context. It looks up pv.Spec.StorageClassName ->
-// sc.Parameters directly without validating PV scanner annotations so shared-mount publishes
-// and periodic republishes cannot fail on profile scanner checks.
+// StorageClass parameters when GCSFuse profiles is enabled and disableHWGRO is not already
+// explicitly specified in the volume context. It resolves the StorageClass (from
+// gke-gcsfuse/storage-class-name in the volume context first when profiles v2 is enabled, otherwise
+// pv.Spec.StorageClassName) without validating PV scanner annotations so shared-mount
+// publishes and periodic republishes cannot fail on profile scanner checks.
 func (s *nodeServer) isHWgroDisabledByStorageClass(vc map[string]string, defaultPVName string) bool {
 	if s.k8sClients == nil || s.driver.config.FeatureOptions == nil ||
 		s.driver.config.FeatureOptions.FeatureGCSFuseProfiles == nil ||
@@ -1730,24 +1733,31 @@ func (s *nodeServer) isHWgroDisabledByStorageClass(vc map[string]string, default
 			return false
 		}
 	}
-	pvName := vc[util.VolumeContextKeyPVName]
-	if pvName == "" {
-		pvName = defaultPVName
+	var scName string
+	if s.driver.config.FeatureOptions.FeatureGCSFuseProfiles.EnableProfilesV2 {
+		scName = strings.TrimSpace(vc[webhook.GcsfuseStorageClassNameVolumeAttribute])
 	}
-	if pvName == "" {
-		return false
-	}
-	pv, err := s.k8sClients.GetPV(pvName)
-	if err != nil || pv == nil || pv.Spec.StorageClassName == "" {
-		if err != nil && !apierrors.IsNotFound(err) {
-			klog.Warningf("Failed to get PV %q for HW GRO/LRO StorageClass check: %v", pvName, err)
+	if scName == "" {
+		pvName := vc[util.VolumeContextKeyPVName]
+		if pvName == "" {
+			pvName = defaultPVName
 		}
-		return false
+		if pvName == "" {
+			return false
+		}
+		pv, err := s.k8sClients.GetPV(pvName)
+		if err != nil || pv == nil || pv.Spec.StorageClassName == "" {
+			if err != nil && !apierrors.IsNotFound(err) {
+				klog.Warningf("Failed to get PV %q for HW GRO/LRO StorageClass check: %v", pvName, err)
+			}
+			return false
+		}
+		scName = pv.Spec.StorageClassName
 	}
-	sc, err := s.k8sClients.GetSC(pv.Spec.StorageClassName)
+	sc, err := s.k8sClients.GetSC(scName)
 	if err != nil || sc == nil {
 		if err != nil && !apierrors.IsNotFound(err) {
-			klog.Warningf("Failed to get StorageClass %q for HW GRO/LRO check: %v", pv.Spec.StorageClassName, err)
+			klog.Warningf("Failed to get StorageClass %q for HW GRO/LRO check: %v", scName, err)
 		}
 		return false
 	}

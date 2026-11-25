@@ -105,6 +105,7 @@ type FakeClientset struct {
 	ListPodErr        error
 	GetPodErr         error
 	GetPodTemplateErr error
+	GetPVErr          error
 }
 
 func NewFakeClientset() *FakeClientset {
@@ -340,6 +341,9 @@ func (c *FakeClientset) GetNode(name string) (*corev1.Node, error) {
 }
 
 func (c *FakeClientset) GetPV(name string) (*corev1.PersistentVolume, error) {
+	if c.GetPVErr != nil {
+		return nil, c.GetPVErr
+	}
 	if pv, ok := c.fakePVs[name]; ok {
 		return pv, nil
 	}

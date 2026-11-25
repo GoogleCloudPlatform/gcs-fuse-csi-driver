@@ -18,6 +18,7 @@ package profiles
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -196,6 +198,12 @@ func (b *SCConfigBuilder) WithParameter(key, value string) *SCConfigBuilder {
 	return b
 }
 
+// WithName sets the Name field.
+func (b *SCConfigBuilder) WithName(name string) *SCConfigBuilder {
+	b.config.Name = name
+	return b
+}
+
 // Build returns the final FakeSCConfig.
 func (b *SCConfigBuilder) Build() clientset.FakeSCConfig {
 	return b.config
@@ -242,17 +250,21 @@ func (b *PodConfigBuilder) Build() clientset.FakePodConfig {
 }
 
 func TestBuildProfileConfig(t *testing.T) {
+	errUnexpectedGetPV := errors.New("unexpected GetPV call")
 	tests := []struct {
-		name       string
-		v2Flag     bool
-		targetPath string
-		pvConfig   clientset.FakePVConfig
-		scConfig   clientset.FakeSCConfig
-		nodeName   string
-		nodeConfig clientset.FakeNodeConfig
-		podConfig  clientset.FakePodConfig
-		wantErr    bool
-		wantConfig *ProfileConfig
+		name          string
+		v2Flag        bool
+		targetPath    string
+		volumeContext map[string]string
+		isEphemeral   bool
+		getPVErr      error
+		pvConfig      clientset.FakePVConfig
+		scConfig      clientset.FakeSCConfig
+		nodeName      string
+		nodeConfig    clientset.FakeNodeConfig
+		podConfig     clientset.FakePodConfig
+		wantErr       bool
+		wantConfig    *ProfileConfig
 	}{
 		{
 			name:       "TestBuildProfileConfig - Should build config successfully",
@@ -391,6 +403,117 @@ func TestBuildProfileConfig(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:   "flag on with storageClassName and PV overrides in VolumeContext - should build V2 config without GetPV",
+			v2Flag: true, targetPath: testTargetPath, nodeName: "test-node", getPVErr: errUnexpectedGetPV,
+			volumeContext: map[string]string{
+				webhook.GcsfuseStorageClassNameVolumeAttribute: "test-sc",
+				fuseFileCacheMediumPriorityKey:                 "gpu:lssd",
+				fuseMemoryAllocatableFactorKey:                 "0.5",
+				fuseEphemeralStorageAllocatableFactorKey:       "0.4",
+			},
+			scConfig:   NewSCConfigBuilder().WithName("test-sc").Build(),
+			nodeConfig: NewNodeConfigBuilder().Build(),
+			podConfig:  NewPodConfigBuilder().Build(),
+			wantConfig: &ProfileConfig{
+				useProfilesV2: true, pvDetails: &pvDetails{name: "test-pv"},
+				scDetails: &scDetails{
+					fileCacheMediumPriority: map[string][]string{"gpu": {"lssd"}}, fuseMemoryAllocatableFactor: 0.5, fuseEphemeralStorageAllocatableFactor: 0.4,
+					volumeAttributes: map[string]string{
+						"mountOptions":                   "1",
+						"fileCacheCapacity":              "2",
+						"fileCacheForRangeRead":          "3",
+						"metadataStatCacheCapacity":      "4",
+						"metadataCacheTTLSeconds":        "5",
+						"gcsfuseLoggingSeverity":         "6",
+						"skipCSIBucketAccessCheck":       "7",
+						"hostNetworkPodKSA":              "8",
+						"identityProvider":               "9",
+						"disableMetrics":                 "10",
+						"identityPool":                   "11",
+						"enableCloudProfilerForSidecar":  "12",
+						"gcsfuseMetadataPrefetchOnMount": "13",
+					},
+					mountOptions: testSCConfig.MountOptions,
+				},
+				nodeDetails: &nodeDetails{
+					name: "test-node", nodeType: "general_purpose",
+					nodeAllocatables: &parsedResourceList{memoryBytes: 2 * 1024 * 1024 * 1024, ephemeralStorageBytes: 20 * 1024 * 1024 * 1024},
+				},
+				podDetails: &podDetails{
+					namespace: "default", name: "test-pod", containerName: webhook.GcsFuseSidecarName, profileVolumeCount: 1,
+					containerLimits: &parsedResourceList{memoryBytes: 1024 * 1024 * 1024, ephemeralStorageBytes: 10 * 1024 * 1024 * 1024},
+				},
+			},
+		},
+		{
+			name:   "flag on with whitespace storageClassName in VolumeContext - should fall back to GetPV",
+			v2Flag: true, targetPath: testTargetPath, nodeName: "test-node",
+			volumeContext: map[string]string{webhook.GcsfuseStorageClassNameVolumeAttribute: "   "},
+			pvConfig:      NewPVConfigBuilder().WithName("test-pv").WithSCName("test-sc").WithAnnotations(nil).Build(),
+			scConfig:      NewSCConfigBuilder().WithName("test-sc").WithParameters(map[string]string{}).Build(),
+			nodeConfig:    NewNodeConfigBuilder().Build(),
+			podConfig:     NewPodConfigBuilder().Build(),
+			wantConfig: &ProfileConfig{
+				useProfilesV2: true, pvDetails: &pvDetails{name: "test-pv"},
+				scDetails: &scDetails{
+					fileCacheMediumPriority: map[string][]string{}, fuseMemoryAllocatableFactor: 0.7, fuseEphemeralStorageAllocatableFactor: 0.85,
+					volumeAttributes: map[string]string{}, mountOptions: testSCConfig.MountOptions,
+				},
+				nodeDetails: &nodeDetails{
+					name: "test-node", nodeType: "general_purpose",
+					nodeAllocatables: &parsedResourceList{memoryBytes: 2 * 1024 * 1024 * 1024, ephemeralStorageBytes: 20 * 1024 * 1024 * 1024},
+				},
+				podDetails: &podDetails{
+					namespace: "default", name: "test-pod", containerName: webhook.GcsFuseSidecarName, profileVolumeCount: 1,
+					containerLimits: &parsedResourceList{memoryBytes: 1024 * 1024 * 1024, ephemeralStorageBytes: 10 * 1024 * 1024 * 1024},
+				},
+			},
+		},
+		{
+			name:          "flag on with non-profile storageClassName in VolumeContext - should return nil without GetPV",
+			v2Flag:        true,
+			targetPath:    testTargetPath,
+			getPVErr:      errUnexpectedGetPV,
+			volumeContext: map[string]string{webhook.GcsfuseStorageClassNameVolumeAttribute: "non-profile-sc"},
+			scConfig:      clientset.FakeSCConfig{Name: "non-profile-sc"},
+			nodeConfig:    NewNodeConfigBuilder().Build(),
+			podConfig:     NewPodConfigBuilder().Build(),
+			wantConfig:    nil,
+		},
+		{
+			name:          "flag on with ephemeral volume and storageClassName in VolumeContext - should return nil without GetPV",
+			v2Flag:        true,
+			targetPath:    testTargetPath,
+			isEphemeral:   true,
+			getPVErr:      errUnexpectedGetPV,
+			volumeContext: map[string]string{webhook.GcsfuseStorageClassNameVolumeAttribute: "test-sc"},
+			scConfig:      NewSCConfigBuilder().WithName("test-sc").Build(),
+			nodeConfig:    NewNodeConfigBuilder().Build(),
+			podConfig:     NewPodConfigBuilder().Build(),
+			wantConfig:    nil,
+		},
+		{
+			name:        "flag on with ephemeral volume without storageClassName - should return nil without GetPV",
+			v2Flag:      true,
+			targetPath:  testTargetPath,
+			isEphemeral: true,
+			getPVErr:    errUnexpectedGetPV,
+			scConfig:    NewSCConfigBuilder().WithName("test-sc").Build(),
+			nodeConfig:  NewNodeConfigBuilder().Build(),
+			podConfig:   NewPodConfigBuilder().Build(),
+			wantConfig:  nil,
+		},
+		{
+			name:          "flag off with storageClassName in VolumeContext and missing PV - should ignore VolumeContext and return nil",
+			targetPath:    testTargetPath,
+			getPVErr:      apierrors.NewNotFound(corev1.Resource("persistentvolumes"), "test-pv"),
+			volumeContext: map[string]string{webhook.GcsfuseStorageClassNameVolumeAttribute: "test-sc"},
+			scConfig:      NewSCConfigBuilder().WithName("test-sc").Build(),
+			nodeConfig:    NewNodeConfigBuilder().Build(),
+			podConfig:     NewPodConfigBuilder().Build(),
+			wantConfig:    nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -415,6 +538,8 @@ func TestBuildProfileConfig(t *testing.T) {
 				pod, _ = fakeClient.GetPod("default", "test-pod")
 			}
 
+			fakeClient.GetPVErr = tt.getPVErr
+
 			got, err := BuildProfileConfig(&BuildProfileConfigParams{
 				TargetPath:          tt.targetPath,
 				Clientset:           fakeClient,
@@ -423,6 +548,8 @@ func TestBuildProfileConfig(t *testing.T) {
 				ContainerName:       webhook.GcsFuseSidecarName,
 				Pod:                 pod,
 				EnableProfilesV2:    tt.v2Flag,
+				VolumeContext:       tt.volumeContext,
+				IsEphemeral:         tt.isEphemeral,
 			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("BuildProfileConfig() error = %v, wantErr %v", err, tt.wantErr)
@@ -658,12 +785,12 @@ func TestBuildSCDetails(t *testing.T) {
 	defaultMountOptions := defaultSC.MountOptions
 
 	tests := []struct {
-		name    string
-		sc      *storagev1.StorageClass
-		pv      *corev1.PersistentVolume
-		useV2   bool
-		want    *scDetails
-		wantErr bool
+		name             string
+		sc               *storagev1.StorageClass
+		volumeAttributes map[string]string
+		useV2            bool
+		want             *scDetails
+		wantErr          bool
 	}{
 		{
 			name: "TestBuildSCDetails - Valid StorageClass",
@@ -791,19 +918,10 @@ func TestBuildSCDetails(t *testing.T) {
 					Build().Parameters,
 				MountOptions: defaultMountOptions,
 			},
-			pv: &corev1.PersistentVolume{
-				Spec: corev1.PersistentVolumeSpec{
-					PersistentVolumeSource: corev1.PersistentVolumeSource{
-						CSI: &corev1.CSIPersistentVolumeSource{
-							Driver: "csi.storage.gke.io",
-							VolumeAttributes: map[string]string{
-								"fuseMemoryAllocatableFactor":           "0.2",
-								"fuseEphemeralStorageAllocatableFactor": "0.3",
-								"fuseFileCacheMediumPriority":           "general_purpose:ram,gpu:ram,tpu:ram",
-							},
-						},
-					},
-				},
+			volumeAttributes: map[string]string{
+				"fuseMemoryAllocatableFactor":           "0.2",
+				"fuseEphemeralStorageAllocatableFactor": "0.3",
+				"fuseFileCacheMediumPriority":           "general_purpose:ram,gpu:ram,tpu:ram",
 			},
 			want: &scDetails{
 				fileCacheMediumPriority: map[string][]string{
@@ -923,11 +1041,46 @@ func TestBuildSCDetails(t *testing.T) {
 				mountOptions:                          defaultMountOptions,
 			},
 		},
+		{
+			name:  "TestBuildSCDetails - V2 volumeAttributes override conflicting SC parameters",
+			useV2: true,
+			volumeAttributes: map[string]string{
+				"fuseMemoryAllocatableFactor":           "0.2",
+				"fuseEphemeralStorageAllocatableFactor": "0.3",
+				"fuseFileCacheMediumPriority":           "gpu:lssd",
+			},
+			sc: &storagev1.StorageClass{
+				ObjectMeta:   metav1.ObjectMeta{Name: "v2-sc", Labels: map[string]string{"gke-gcsfuse/profile": "true"}},
+				Parameters:   defaultParams,
+				MountOptions: defaultMountOptions,
+			},
+			want: &scDetails{
+				fileCacheMediumPriority:               map[string][]string{"gpu": {"lssd"}},
+				fuseMemoryAllocatableFactor:           0.2,
+				fuseEphemeralStorageAllocatableFactor: 0.3,
+				volumeAttributes: map[string]string{
+					"mountOptions":                   "1",
+					"fileCacheCapacity":              "2",
+					"fileCacheForRangeRead":          "3",
+					"metadataStatCacheCapacity":      "4",
+					"metadataCacheTTLSeconds":        "5",
+					"gcsfuseLoggingSeverity":         "6",
+					"skipCSIBucketAccessCheck":       "7",
+					"hostNetworkPodKSA":              "8",
+					"identityProvider":               "9",
+					"disableMetrics":                 "10",
+					"identityPool":                   "11",
+					"enableCloudProfilerForSidecar":  "12",
+					"gcsfuseMetadataPrefetchOnMount": "13",
+				},
+				mountOptions: defaultMountOptions,
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildSCDetails(tt.pv, tt.sc, csiDriverVolumeAttributeKeys, tt.useV2)
+			got, err := buildSCDetails(tt.volumeAttributes, tt.sc, csiDriverVolumeAttributeKeys, tt.useV2)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("buildSCDetails() error = %v, wantErr %v", err, tt.wantErr)
 			}
