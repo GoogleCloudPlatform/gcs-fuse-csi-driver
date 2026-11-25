@@ -1079,12 +1079,6 @@ func removeDefaultClientProtocol(attributes map[string]string, mountOptions []st
 	attributes["mountOptions"] = strings.Join(options, ",")
 }
 
-// appendMountOptions appends mountOptions to the CSI volume's mountOptions attribute.
-func appendMountOptions(csi *corev1.CSIVolumeSource, mountOptions []string) {
-	removeDefaultClientProtocol(csi.VolumeAttributes, mountOptions)
-	csi.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
-}
-
 func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, name string, readOnly bool, mountOptions ...string) {
 	volume := corev1.Volume{
 		Name: name,
@@ -1102,7 +1096,8 @@ func (t *TestPod) setupVolume(volumeResource *storageframework.VolumeResource, n
 		if volumeResource.VolSource.CSI != nil {
 			volume.VolumeSource.CSI.ReadOnly = &readOnly
 			if len(mountOptions) > 0 {
-				appendMountOptions(volume.VolumeSource.CSI, mountOptions)
+				removeDefaultClientProtocol(volume.VolumeSource.CSI.VolumeAttributes, mountOptions)
+				volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
 			}
 		}
 	}
@@ -1127,7 +1122,8 @@ func (t *TestPod) SetupVolumeWithHostNetworkKSAOptIn(volumeResource *storagefram
 			volume.VolumeSource.CSI.VolumeAttributes["hostNetworkPodKSA"] = "true"
 			volume.VolumeSource.CSI.ReadOnly = &readOnly
 			if len(mountOptions) > 0 {
-				appendMountOptions(volume.VolumeSource.CSI, mountOptions)
+				removeDefaultClientProtocol(volume.VolumeSource.CSI.VolumeAttributes, mountOptions)
+				volume.VolumeSource.CSI.VolumeAttributes["mountOptions"] += "," + strings.Join(mountOptions, ",")
 			}
 		}
 	}
