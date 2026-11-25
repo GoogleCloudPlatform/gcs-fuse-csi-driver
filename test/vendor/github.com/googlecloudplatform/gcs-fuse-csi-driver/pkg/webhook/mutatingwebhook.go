@@ -108,12 +108,15 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 			return admission.Allowed(fmt.Sprintf("No mutation Required on PersistentVolume: %s", pv.Name))
 		}
 
-		if si.Config.EnableGcsfuseProfiles {
+		// Profiles V2 ignores bucket scan and override annotations, so only validate them under V1.
+		if si.Config.EnableGcsfuseProfiles && !si.Config.EnableGcsfuseProfilesV2 {
 			if err := si.validatePersistentVolumeForGCSFuseProfiles(pv); err != nil {
 				klog.Errorf("PersistentVolume validation failed: %v", err)
 				return admission.Errored(http.StatusBadRequest, err)
 			}
 		}
+
+		mutated := false
 
 		// Patch the label to PV if it uses shared node mount.
 		if si.Config.EnableSharedNodeMount && pv.Spec.CSI.VolumeAttributes != nil && pv.Spec.CSI.VolumeAttributes[SharedMountVolumeAttribute] == util.TrueStr {
@@ -123,12 +126,28 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 				}
 				pv.Labels[SharedMountLabel] = util.TrueStr
 				pv.Spec.CSI.VolumeAttributes[util.VolumeContextKeyPVName] = pv.Name
-				marshaledPV, err := json.Marshal(pv)
-				if err != nil {
-					return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to marshal pv: %w", err))
-				}
-				return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPV)
+				mutated = true
 			}
+		}
+
+		// Inject storageClassName into VolumeAttributes under Profiles V2 so CSI Node can bypass GetPV.
+		// Skip ScLister filtering so an informer cache miss cannot permanently omit this immutable attribute; the node ignores non-profile StorageClasses.
+		if si.Config.EnableGcsfuseProfiles && si.Config.EnableGcsfuseProfilesV2 && pv.Spec.StorageClassName != "" {
+			if pv.Spec.CSI.VolumeAttributes[GcsfuseStorageClassNameVolumeAttribute] != pv.Spec.StorageClassName {
+				if pv.Spec.CSI.VolumeAttributes == nil {
+					pv.Spec.CSI.VolumeAttributes = make(map[string]string)
+				}
+				pv.Spec.CSI.VolumeAttributes[GcsfuseStorageClassNameVolumeAttribute] = pv.Spec.StorageClassName
+				mutated = true
+			}
+		}
+
+		if mutated {
+			marshaledPV, err := json.Marshal(pv)
+			if err != nil {
+				return admission.Errored(http.StatusInternalServerError, fmt.Errorf("failed to marshal pv: %w", err))
+			}
+			return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPV)
 		}
 
 		return admission.Allowed(fmt.Sprintf("No mutation Required on PersistentVolume: %s", pv.Name))
@@ -223,12 +242,12 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	if hasSharedNodeMount {
 		// Inject profiles label and scheduling gate if storage profiles are enabled and match.
 		if si.Config.EnableGcsfuseProfiles {
-			profilesEnabled, err := si.IsGCSFuseProfilesEnabled(pod)
+			profileVolumeCount, err := si.countProfileVolumes(pod)
 			if err != nil {
 				return admission.Errored(http.StatusBadRequest, err)
 			}
-			if profilesEnabled {
-				if err := ModifyPodSpecForGCSFuseProfiles(pod, false, true); err != nil {
+			if profileVolumeCount > 0 {
+				if err := ModifyPodSpecForGCSFuseProfiles(pod, false, true, si.Config.EnableGcsfuseProfilesV2, profileVolumeCount); err != nil {
 					return admission.Errored(http.StatusBadRequest, err)
 				}
 				marshaledPod, err := json.Marshal(pod)
@@ -374,14 +393,13 @@ func (si *SidecarInjector) Handle(ctx context.Context, req admission.Request) ad
 	if si.Config.EnableGcsfuseProfiles {
 		klog.Infof("GCSFuse profiles feature flag is enabled")
 		// Handle gcsfuse profiles spec modifications if using gcsfuse profile enabled buckets
-		profilesEnabled, err := si.IsGCSFuseProfilesEnabled(pod)
+		profileVolumeCount, err := si.countProfileVolumes(pod)
 		if err != nil {
 			return admission.Errored(http.StatusBadRequest, err)
 		}
-		klog.Infof("Pod %q has at least one volume using gcsfuse profiles", pod.Name)
-		if profilesEnabled {
-			err = ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser, false)
-			if err != nil {
+		if profileVolumeCount > 0 {
+			klog.Infof("Pod %s/%s (generateName %q) has %d volume(s) using gcsfuse profiles", pod.Namespace, pod.Name, pod.GenerateName, profileVolumeCount)
+			if err := ModifyPodSpecForGCSFuseProfiles(pod, cacheCreatedByUser, false, si.Config.EnableGcsfuseProfilesV2, profileVolumeCount); err != nil {
 				return admission.Errored(http.StatusBadRequest, err)
 			}
 		}
@@ -432,38 +450,49 @@ func audienceForInjectedSATokenVolume(projectID string, pod *corev1.Pod) string 
 	return foundIdentityProvider
 }
 
-// Modifies the pod spec to add gcsfuse profile related features. This includes adding a label, scheduling gate, and placeholder file cache volumes
-func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser bool, isSharedMount bool) error {
+// ModifyPodSpecForGCSFuseProfiles adds gcsfuse profile metadata, optional scheduling gate, and placeholder file cache volumes to the pod spec.
+func ModifyPodSpecForGCSFuseProfiles(pod *corev1.Pod, cacheCreatedByUser, isSharedMount, enableProfilesV2 bool, profileVolumeCount int) error {
 	// Always apply the gcsfuse profile label when gcsfuse profiles are enabled for pod informer's Kubernetes API efficient filtering
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
 
-	// This annotation is used by the scanner to efficiently filter relevant Pods from the Kubernetes API server.
-	pod.Labels[GcsfuseProfilesManagedLabel] = "true"
+	// This label is used by the scanner to efficiently filter relevant Pods from the Kubernetes API server.
+	pod.Labels[GcsfuseProfilesManagedLabel] = util.TrueStr
 
-	// This annotation is used by the CSI node to determine whether to respect the user-created cache volume or recommend a caching medium.
+	// This label is used by the CSI node to determine whether to respect the user-created cache volume or recommend a caching medium.
 	if cacheCreatedByUser {
-		pod.Labels[GcsfuseCacheCreatedByUserLabel] = fmt.Sprintf("%t", cacheCreatedByUser)
+		pod.Labels[GcsfuseCacheCreatedByUserLabel] = util.TrueStr
 	}
 
-	// Always apply the scheduling gate when the gcsfuse profiles are enabled. The controller will handle the logistics if its not needed
-	profilesGate := corev1.PodSchedulingGate{Name: BucketScanPendingSchedulingGate}
+	if !enableProfilesV2 {
+		// Always apply the scheduling gate for profiles V1 so the controller can finish bucket scanning first.
+		profilesGate := corev1.PodSchedulingGate{Name: BucketScanPendingSchedulingGate}
 
-	// Check if the gate is already present.
-	gateExists := slices.ContainsFunc(pod.Spec.SchedulingGates, func(gate corev1.PodSchedulingGate) bool {
-		return gate.Name == profilesGate.Name
-	})
+		// Check if the gate is already present.
+		gateExists := slices.ContainsFunc(pod.Spec.SchedulingGates, func(gate corev1.PodSchedulingGate) bool {
+			return gate.Name == profilesGate.Name
+		})
 
-	// Only append the gate if it does not already exist
-	if !gateExists {
-		pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, profilesGate)
-	} else {
-		klog.Warningf("Pod %s/%s already has the %s scheduling gate, skipping injection of gcsfuse profiles scheduling gate.", pod.Namespace, pod.Name, BucketScanPendingSchedulingGate)
+		// Only append the gate if it does not already exist
+		if !gateExists {
+			pod.Spec.SchedulingGates = append(pod.Spec.SchedulingGates, profilesGate)
+		} else {
+			klog.Warningf("Pod %s/%s already has the %s scheduling gate, skipping injection of gcsfuse profiles scheduling gate.", pod.Namespace, pod.Name, BucketScanPendingSchedulingGate)
+		}
 	}
 
 	if isSharedMount {
 		return nil
+	}
+
+	// Record the distinct profile PVC count so CSI Node can split the sidecar stat-cache memory budget.
+	// Skipped for shared mount above since it runs in a separate mounter pod instead of a per-pod sidecar.
+	if enableProfilesV2 {
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		pod.Annotations[GcsfuseProfileVolumeCountAnnotation] = strconv.Itoa(profileVolumeCount)
 	}
 
 	// Inject placeholder file cache volumes
@@ -555,18 +584,19 @@ func (si *SidecarInjector) profileStorageClass(namespace string, volume corev1.V
 	return sc, nil
 }
 
-// Checks if any volume is using the gcsfuse profiles feature. Returns an error in the case of a failure.
-func (si *SidecarInjector) IsGCSFuseProfilesEnabled(pod *corev1.Pod) (bool, error) {
+// countProfileVolumes counts distinct profile PVCs referenced by the pod's volumes.
+func (si *SidecarInjector) countProfileVolumes(pod *corev1.Pod) (int, error) {
+	profilePVCs := make(map[string]struct{})
 	for _, volume := range pod.Spec.Volumes {
 		sc, err := si.profileStorageClass(pod.Namespace, volume)
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		if sc != nil {
-			return true, nil
+			profilePVCs[volume.PersistentVolumeClaim.ClaimName] = struct{}{}
 		}
 	}
-	return false, nil
+	return len(profilePVCs), nil
 }
 
 // VolumeExists checks if a volume with a specific name already exists in the pod's volumes
