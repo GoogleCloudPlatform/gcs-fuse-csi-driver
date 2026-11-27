@@ -78,7 +78,7 @@ const (
 
 	gkeTempDir = "/gcsfuse-tmp"
 
-	gcsfuseGoEnvSetupFormat = "export GO_VERSION=$(%v) && export GO_VERSION=${GO_VERSION#go} && export GOTOOLCHAIN=go$GO_VERSION+auto && export PATH=$PATH:/usr/local/go/bin"
+	gcsfuseGoEnvSetupFormat = "export GO_VERSION=$(%v) && export GO_VERSION=${GO_VERSION#go} && export GOTOOLCHAIN=${GO_VERSION:+go${GO_VERSION}+}auto && export PATH=$PATH:/usr/local/go/bin"
 )
 
 // testPackageTimeoutMap controls the duration of the `-timeout` flag passed to the underlying `go test` executions.
@@ -94,8 +94,8 @@ var testPackageTimeoutMap = map[string]int{
 
 var GCSFuseVersionStr = ""
 
-const gcsfuseGoVersionLegacyCommand = `grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' ./gcsfuse/tools/cd_scripts/e2e_test.sh | cut -c3-`
-const gcsfuseCentralizedLocationGoVersionCommand = `cat ./gcsfuse/.go-version | tr -d '[:space:]'`
+const gcsfuseGoVersionLegacyCommand = `grep -m 1 -o "go[0-9]\+\.[0-9]\+\.[0-9]\+" ./gcsfuse/tools/cd_scripts/e2e_test.sh | head -n 1 | cut -c3-`
+const gcsfuseCentralizedLocationGoVersionCommand = `cat ./gcsfuse/.go-version | tr -d "[:space:]"`
 
 func hnsEnabled(driver storageframework.TestDriver) bool {
 	gcsfuseCSITestDriver, ok := driver.(*specs.GCSFuseCSITestDriver)
@@ -659,11 +659,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 
 		gcsfuseGoVersionCommand := getGoParsingCommand(*gcsfuseVersion, gcsfuseTestBranch)
 
-		gcsfuseTestSuiteVersion := tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, gcsfuseGoVersionCommand)
+		gcsfuseTestSuiteVersion := strings.TrimSpace(tPod.VerifyExecInPodSucceedWithOutput(f, specs.TesterContainerName, gcsfuseGoVersionCommand))
 
 		ginkgo.By("Checking that the gcsfuse integration tests exits with no error")
 
-		baseTestCommand := fmt.Sprintf("export GO_VERSION=%v && export GO_VERSION=${GO_VERSION#go} && export GOTOOLCHAIN=go$GO_VERSION+auto && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, mountPath)
+		baseTestCommand := fmt.Sprintf("export GO_VERSION=%v && export GO_VERSION=${GO_VERSION#go} && export GOTOOLCHAIN=${GO_VERSION:+go${GO_VERSION}+}auto && export PATH=$PATH:/usr/local/go/bin && cd %v/%v && GODEBUG=asyncpreemptoff=1 go test . -p 1 --integrationTest -v --mountedDirectory=%v", gcsfuseTestSuiteVersion, gcsfuseIntegrationTestsBasePath, testName, mountPath)
 		if zbEnabled(driver) {
 			baseTestCommand += " --zonal=true"
 		}
@@ -675,7 +675,7 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 			if readOnly {
 				finalTestCommand = baseTestCommandWithTestBucket
 			} else {
-				finalTestCommand = fmt.Sprintf("chmod 777 %v/readonly && useradd -u 6666 -m test-user && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket)
+				finalTestCommand = fmt.Sprintf("chmod 777 %v/readonly && (id -u test-user >/dev/null 2>&1 || useradd -u 6666 -m test-user) && su test-user -c '%v'", gcsfuseIntegrationTestsBasePath, baseTestCommandWithTestBucket)
 			}
 		case testNameExplicitDir, testNameImplicitDir, testNameGzip, testNameLocalFile, testNameOperations, testNameEnableStreamingWrites:
 			finalTestCommand = baseTestCommandWithTestBucket
