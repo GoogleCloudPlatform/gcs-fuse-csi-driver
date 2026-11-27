@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -801,28 +800,6 @@ func getInternalMountOptionValue(options []string, key string) string {
 		}
 	}
 	return ""
-}
-
-func onlyDirPrefix(mountOptions []string) string {
-	var cliSet bool
-	var cliDir, cfgDir string
-	for _, opt := range mountOptions {
-		item := strings.TrimSpace(opt)
-		if val, ok := strings.CutPrefix(item, "only-dir="); ok {
-			cliSet, cliDir = true, val
-		} else if val, ok := strings.CutPrefix(item, "only-dir:"); ok {
-			cfgDir = val
-		}
-	}
-	onlyDir := cfgDir
-	if cliSet {
-		onlyDir = cliDir
-	}
-	onlyDir = strings.TrimPrefix(path.Clean("/"+onlyDir), "/")
-	if onlyDir == "" {
-		return ""
-	}
-	return onlyDir + "/"
 }
 
 func isAnonymousAccess(mountOptions []string) bool {

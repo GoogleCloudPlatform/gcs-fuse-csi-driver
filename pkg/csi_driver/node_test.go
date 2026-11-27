@@ -2162,6 +2162,74 @@ func TestNodePublishVolumeRespectEnableSidecarBucketAccessCheck(t *testing.T) {
 	}
 }
 
+func TestNodePublishVolumeChecksBucketAccessOnOnlyDir(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name             string
+		userMountOptions string
+		expectedPrefix   string
+	}{
+		{
+			name:             "should check access to the whole bucket without only-dir",
+			userMountOptions: "implicit-dirs",
+			expectedPrefix:   "",
+		},
+		{
+			name:             "should check access to the directory of the only-dir flag",
+			userMountOptions: "implicit-dirs,only-dir=data",
+			expectedPrefix:   "data/",
+		},
+		{
+			name:             "should check access to the directory of the only-dir config file flag",
+			userMountOptions: "implicit-dirs,only-dir:data",
+			expectedPrefix:   "data/",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			testTargetPath, cleanup := setupTestTargetPath(t)
+			defer cleanup()
+
+			req := &csi.NodePublishVolumeRequest{
+				VolumeId:         testVolumeID,
+				TargetPath:       testTargetPath,
+				VolumeCapability: testVolumeCapability,
+				VolumeContext: map[string]string{
+					VolumeContextKeyPodName:            "test-pod",
+					VolumeContextKeyPodNamespace:       "test-ns",
+					VolumeContextKeyServiceAccountName: "test-sa",
+					VolumeContextKeyMountOptions:       tc.userMountOptions,
+				},
+			}
+			fakeMounter := mount.NewFakeMounter([]mount.MountPoint{})
+
+			driver := initTestDriver(t, fakeMounter, clientset.NewFakeClientset())
+			svc, err := driver.config.StorageServiceManager.SetupService(context.Background(), nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.CreateBucket(context.Background(), &storage.ServiceBucket{Name: testVolumeID}); err != nil {
+				t.Fatal(err)
+			}
+			storageServiceManager := &recordingStorageServiceManager{ServiceManager: driver.config.StorageServiceManager}
+			driver.config.StorageServiceManager = storageServiceManager
+			ns := newNodeServer(driver, fakeMounter)
+
+			if _, err := ns.NodePublishVolume(context.TODO(), req); err != nil {
+				t.Fatalf("failed to publish volume: %v", err)
+			}
+
+			expected := &storage.ServiceBucket{Name: testVolumeID, Prefix: tc.expectedPrefix}
+			if diff := cmp.Diff(expected, storageServiceManager.gotBucket); diff != "" {
+				t.Errorf("unexpected bucket access checks (-expected +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 type volumeTestCase struct {
 	name                         string
 	totalEphemeralVolumeCount    int
@@ -6305,6 +6373,7 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 		scMountOptions     []string
 		volumeContext      map[string]string
 		failOnGetPV        bool
+		checkBucketAccess  bool
 		zonalBucket        bool
 		skipCreateBucket   bool
 		cachedLocationType string
@@ -6341,6 +6410,13 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 			failOnGetPV:   true,
 			wantNoProfile: true,
 		},
+		{
+			name:              "CSI bucket access check uses only-dir from the StorageClass",
+			scMountOptions:    []string{"only-dir=team-a/sub"},
+			checkBucketAccess: true,
+			wantLSSD:          true,
+			wantPrefix:        "team-a/sub/",
+		},
 	}
 
 	for _, tc := range cases {
@@ -6365,7 +6441,7 @@ func TestNodePublishVolumeProfilesV2(t *testing.T) {
 			fakeClient.CreatePV(clientset.FakePVConfig{Name: "node-publish", SCName: "gcsfusecsi-training"})
 			fakeClient.CreateSC(clientset.FakeSCConfig{
 				Name: "gcsfusecsi-training", Labels: map[string]string{"gke-gcsfuse/profile": util.TrueStr},
-				Parameters:   map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: util.TrueStr, "fuseFileCacheMediumPriority": "gpu:lssd"},
+				Parameters:   map[string]string{VolumeContextKeySkipCSIBucketAccessCheck: strconv.FormatBool(!tc.checkBucketAccess), "fuseFileCacheMediumPriority": "gpu:lssd"},
 				MountOptions: tc.scMountOptions,
 			})
 
@@ -6502,6 +6578,14 @@ type recordingStorageServiceManager struct {
 	gotWithoutAuth bool
 	gotBucket      *storage.ServiceBucket
 	gotDeadline    bool
+}
+
+func (m *recordingStorageServiceManager) SetupService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string) (storage.Service, error) {
+	svc, err := m.ServiceManager.SetupService(ctx, ts, customEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	return &recordingStorageService{Service: svc, mgr: m}, nil
 }
 
 func (m *recordingStorageServiceManager) SetupStorageControlService(ctx context.Context, ts oauth2.TokenSource, customEndpoint string, withoutAuth bool) (storage.Service, error) {
